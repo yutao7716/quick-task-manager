@@ -1,0 +1,15 @@
+{
+  "name": "quick-task-manager",
+  "version": "1.0.0",
+  "description": "お手軽タスク管理アプリ v1",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "dependencies": {
+    "sql.js": "^1.12.0"
+  },
+  "devDependencies": {
+    "electron": "^29.4.6"
+  }
+}

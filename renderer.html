@@ -1,0 +1,748 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>タスク管理</title>
+<style>
+/* ─── リセット & CSS 変数 ─────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:           #1a1a2e;
+  --surface:      #252540;
+  --surface2:     #2e2e50;
+  --border:       #3d3d60;
+  --accent:       #7c6ff7;
+  --accent-glow:  rgba(124,111,247,0.25);
+  --text:         #ddddf5;
+  --text-dim:     #7878a0;
+  --done-text:    #4a4a6a;
+  --danger:       #e06c75;
+  --success:      #7ec98a;
+  --radius:       8px;
+  --shadow:       0 8px 32px rgba(0,0,0,0.6);
+}
+
+html, body {
+  width: 100%; height: 100%;
+  background: transparent;
+  font-family: 'Segoe UI', 'Hiragino Sans', 'Yu Gothic UI', sans-serif;
+  font-size: 14px;
+  color: var(--text);
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* ─── アプリ全体 ─────────────────────────────── */
+#app {
+  display: flex; flex-direction: column;
+  height: 100vh;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+/* ─── ヘッダー ───────────────────────────────── */
+#header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px 10px 12px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  -webkit-app-region: drag;
+  flex-shrink: 0;
+}
+
+#header .icon { font-size: 20px; flex-shrink: 0; }
+
+#header .title {
+  flex: 1;
+  font-size: 14px; font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--text);
+}
+
+#btn-close {
+  -webkit-app-region: no-drag;
+  background: none; border: none; cursor: pointer;
+  color: var(--text-dim); font-size: 15px;
+  width: 26px; height: 26px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  transition: background 0.15s, color 0.15s;
+}
+#btn-close:hover { background: var(--danger); color: #fff; }
+
+/* ─── ショートカットヒント ───────────────────── */
+#shortcut-hint {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 12px;
+  background: linear-gradient(90deg, rgba(124,111,247,0.12), transparent);
+  border-bottom: 1px solid var(--border);
+  font-size: 11px; color: var(--text-dim);
+  flex-shrink: 0;
+  cursor: default;
+}
+#shortcut-hint .key {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 10px; font-weight: 600;
+  color: var(--accent);
+  letter-spacing: 0.05em;
+}
+
+/* ─── 入力欄 ─────────────────────────────────── */
+#input-area {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+#task-input {
+  width: 100%;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 14px;
+  padding: 8px 12px;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+#task-input::placeholder { color: var(--text-dim); }
+#task-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+/* ─── タスクリスト ───────────────────────────── */
+#list-area {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+#list-area::-webkit-scrollbar { width: 4px; }
+#list-area::-webkit-scrollbar-track { background: transparent; }
+#list-area::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+/* ─── 仕切り ─────────────────────────────────── */
+.divider {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 14px;
+  font-size: 11px; color: var(--text-dim);
+}
+.divider::before, .divider::after {
+  content: ''; flex: 1; height: 1px; background: var(--border);
+}
+
+/* ─── タスクアイテム ─────────────────────────── */
+.task-item {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 10px 5px 8px;
+  margin: 1px 6px;
+  border-radius: 7px;
+  transition: background 0.1s;
+  position: relative;
+  min-height: 38px;
+}
+.task-item:hover { background: var(--surface2); }
+
+/* ドラッグ中 */
+.task-item.dragging { opacity: 0.35; }
+.task-item.drag-over-top    { border-top:    2px solid var(--accent); }
+.task-item.drag-over-bottom { border-bottom: 2px solid var(--accent); }
+
+/* ドラッグハンドル */
+.drag-handle {
+  color: var(--border); font-size: 15px;
+  cursor: grab; flex-shrink: 0;
+  padding: 2px 2px;
+  transition: color 0.15s;
+  line-height: 1;
+}
+.task-item:hover .drag-handle { color: var(--text-dim); }
+.task-item.completed .drag-handle { visibility: hidden; pointer-events: none; }
+
+/* チェックボックス */
+.task-check {
+  width: 19px; height: 19px;
+  border: 2px solid var(--border);
+  border-radius: 5px;
+  flex-shrink: 0;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: border-color 0.15s, background 0.15s;
+}
+.task-check:hover { border-color: var(--accent); }
+.task-item.completed .task-check {
+  background: var(--accent); border-color: var(--accent);
+}
+.task-check .chk { color: #fff; font-size: 11px; display: none; }
+.task-item.completed .task-check .chk { display: block; }
+
+/* タスクタイトル */
+.task-title {
+  flex: 1;
+  word-break: break-all;
+  line-height: 1.45;
+  font-size: 13.5px;
+  -webkit-user-select: text;
+  user-select: text;
+}
+.task-item.completed .task-title {
+  color: var(--done-text);
+  text-decoration: line-through;
+}
+
+/* ─── インライン時間入力 ─────────────────────── */
+.time-wrap {
+  display: flex; align-items: center; gap: 3px;
+  flex-shrink: 0;
+}
+
+/* 未完了: 数値入力欄 */
+.time-input {
+  width: 48px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  font-size: 12px;
+  padding: 3px 6px;
+  text-align: center;
+  outline: none;
+  transition: border-color 0.15s;
+  /* スピンボタン非表示 */
+  -moz-appearance: textfield;
+}
+.time-input::-webkit-inner-spin-button,
+.time-input::-webkit-outer-spin-button { -webkit-appearance: none; }
+.time-input:focus { border-color: var(--accent); }
+
+/* 完了済み: 時間バッジ */
+.time-badge {
+  font-size: 11px; color: var(--text-dim);
+  background: var(--surface2);
+  padding: 2px 7px; border-radius: 10px;
+  white-space: nowrap;
+}
+
+.time-unit {
+  font-size: 11px; color: var(--text-dim); white-space: nowrap;
+}
+
+/* 削除ボタン */
+.task-delete {
+  background: none; border: none; cursor: pointer;
+  color: var(--border); font-size: 14px;
+  width: 22px; height: 22px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 4px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s, background 0.15s;
+}
+.task-item:hover .task-delete { opacity: 1; }
+.task-delete:hover { color: var(--danger); background: rgba(224,108,117,0.15); }
+
+/* 空状態 */
+.empty-state {
+  text-align: center; color: var(--text-dim);
+  padding: 18px 12px; font-size: 12px; line-height: 1.7;
+}
+.empty-state span { display: block; font-size: 24px; margin-bottom: 6px; }
+
+/* ─── フッター ───────────────────────────────── */
+#footer {
+  padding: 7px 14px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 12px; color: var(--text-dim);
+  flex-shrink: 0;
+  display: flex; align-items: center; gap: 6px;
+}
+#footer .dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent); flex-shrink: 0;
+}
+
+/* ─── 削除確認モーダル ───────────────────────── */
+.modal-overlay {
+  display: none;
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.55);
+  align-items: center; justify-content: center;
+  z-index: 200;
+  border-radius: 12px;
+}
+.modal-overlay.active { display: flex; }
+
+.modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px 20px 16px;
+  width: 250px;
+  box-shadow: var(--shadow);
+}
+.modal h3 {
+  font-size: 13px; color: var(--text);
+  margin-bottom: 16px; line-height: 1.5;
+}
+.modal .btn-row {
+  display: flex; gap: 8px; justify-content: flex-end;
+}
+.btn {
+  padding: 6px 16px; border: none; border-radius: 6px;
+  cursor: pointer; font-size: 12px; font-weight: 600;
+  transition: opacity 0.15s;
+}
+.btn:hover { opacity: 0.85; }
+.btn-primary   { background: var(--accent); color: #fff; }
+.btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+.btn-danger    { background: var(--danger);  color: #fff; }
+
+/* クイック追加ハイライト */
+@keyframes flash-input {
+  0%, 100% { box-shadow: 0 0 0 3px var(--accent-glow); }
+  50%       { box-shadow: 0 0 0 5px rgba(124,111,247,0.45); }
+}
+.input-flash {
+  animation: flash-input 0.6s ease 2;
+  border-color: var(--accent) !important;
+}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ヘッダー -->
+  <div id="header">
+    <span class="icon">🐬</span>
+    <span class="title">今日のタスク</span>
+    <button id="btn-close" title="閉じる（常駐継続）">✕</button>
+  </div>
+
+  <!-- ショートカットヒント -->
+  <div id="shortcut-hint">
+    <span>テキストをコピー後</span>
+    <span class="key">Ctrl+Shift+T</span>
+    <span>でタスクに追加</span>
+  </div>
+
+  <!-- 入力欄 -->
+  <div id="input-area">
+    <input type="text" id="task-input" placeholder="タスクを入力して Enter" maxlength="200" autocomplete="off" spellcheck="false">
+  </div>
+
+  <!-- タスクリスト -->
+  <div id="list-area">
+    <div id="list-incomplete"></div>
+    <div id="divider-done" class="divider" style="display:none">完了済み</div>
+    <div id="list-complete"></div>
+  </div>
+
+  <!-- フッター -->
+  <div id="footer">
+    <div class="dot"></div>
+    <span id="footer-text">今日の完了：0件 / 0分</span>
+  </div>
+</div>
+
+<!-- 削除確認モーダル -->
+<div class="modal-overlay" id="modal-delete">
+  <div class="modal">
+    <h3>このタスクを削除しますか？</h3>
+    <div class="btn-row">
+      <button class="btn btn-secondary" id="btn-del-cancel">キャンセル</button>
+      <button class="btn btn-danger"    id="btn-del-ok">削除</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 状態
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+let tasks          = [];
+let pendingDeleteId = null;
+let dragSrcIdx     = null;  // ドラッグ元インデックス（未完了リスト内）
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ユーティリティ
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+const genId  = () => 'task_' + Date.now() + '_' + Math.random().toString(36).slice(2,8);
+const nowISO = () => new Date().toISOString();
+
+function formatMinutes(mins) {
+  if (mins === null || mins === undefined || mins === '') return '';
+  const m = parseInt(mins, 10);
+  if (isNaN(m)) return '';
+  if (m < 60) return m + '分';
+  const h = Math.floor(m / 60);
+  const r = m % 60;
+  return r === 0 ? h + '時間' : h + '時間' + r + '分';
+}
+
+function isToday(isoStr) {
+  if (!isoStr) return false;
+  const d = new Date(isoStr), n = new Date();
+  return d.getFullYear() === n.getFullYear()
+      && d.getMonth()    === n.getMonth()
+      && d.getDate()     === n.getDate();
+}
+
+function escHtml(str) {
+  return str
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// レンダリング
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function render() {
+  const incomplete = tasks.filter(t => !t.completed);
+  const complete   = tasks.filter(t =>  t.completed);
+
+  renderIncomplete(incomplete);
+  renderComplete(complete);
+
+  document.getElementById('divider-done').style.display =
+    complete.length > 0 ? 'flex' : 'none';
+
+  renderFooter();
+}
+
+/* 未完了タスク */
+function renderIncomplete(list) {
+  const container = document.getElementById('list-incomplete');
+  container.innerHTML = '';
+
+  if (list.length === 0) {
+    container.innerHTML =
+      '<div class="empty-state"><span>✨</span>タスクを追加してください</div>';
+    return;
+  }
+
+  list.forEach((task, idx) => {
+    const item = buildTaskItem(task, idx, false);
+    container.appendChild(item);
+  });
+}
+
+/* 完了済みタスク */
+function renderComplete(list) {
+  const container = document.getElementById('list-complete');
+  container.innerHTML = '';
+  list.forEach((task, idx) => {
+    const item = buildTaskItem(task, idx, true);
+    container.appendChild(item);
+  });
+}
+
+/* タスクアイテムDOM生成 */
+function buildTaskItem(task, idx, isDone) {
+  const item = document.createElement('div');
+  item.className = 'task-item' + (isDone ? ' completed' : '');
+  item.dataset.id    = task.id;
+  item.dataset.idx   = idx;
+  item.dataset.done  = isDone ? '1' : '0';
+
+  // 時間表示部分
+  const timeHtml = isDone
+    ? `<span class="time-badge">${formatMinutes(task.spent_minutes) || '–'}</span>`
+    : `<div class="time-wrap">
+         <input class="time-input" type="number" min="0" max="9999"
+           placeholder="分" value="${task.spent_minutes ?? ''}"
+           title="作業時間（分）">
+         <span class="time-unit">分</span>
+       </div>`;
+
+  item.innerHTML = `
+    <span class="drag-handle" title="ドラッグで並び替え">⠿</span>
+    <div class="task-check" title="${isDone ? '完了を取り消す' : '完了にする'}">
+      <span class="chk">✓</span>
+    </div>
+    <span class="task-title">${escHtml(task.title)}</span>
+    ${timeHtml}
+    <button class="task-delete" title="削除">✕</button>
+  `;
+
+  // ─ イベント ─
+  item.querySelector('.task-check').addEventListener('click', () => handleCheck(task, item));
+  item.querySelector('.task-delete').addEventListener('click', () => openDeleteModal(task.id));
+
+  if (!isDone) {
+    // 時間入力: blur 時に保存
+    const timeInput = item.querySelector('.time-input');
+    timeInput.addEventListener('blur', () => saveTimeInput(task.id, timeInput.value));
+    timeInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { timeInput.blur(); }
+    });
+    // ドラッグ
+    item.draggable = true;
+    item.addEventListener('dragstart', onDragStart);
+    item.addEventListener('dragover',  onDragOver);
+    item.addEventListener('drop',      onDrop);
+    item.addEventListener('dragend',   onDragEnd);
+    item.addEventListener('dragleave', onDragLeave);
+  }
+
+  return item;
+}
+
+function renderFooter() {
+  const todayDone = tasks.filter(t => t.completed && isToday(t.completed_at));
+  const count     = todayDone.length;
+  const totalMin  = todayDone
+    .filter(t => t.spent_minutes != null)
+    .reduce((s, t) => s + parseInt(t.spent_minutes, 10), 0);
+
+  document.getElementById('footer-text').textContent =
+    '今日の完了：' + count + '件 / ' + (count > 0 ? (formatMinutes(totalMin) || '0分') : '0分');
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// タスク操作
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/* タスク追加 */
+async function addTask(title) {
+  const t = title.trim();
+  if (!t) return;
+
+  const id  = genId();
+  const now = nowISO();
+
+  // 未完了リスト先頭に追加 → 既存の order をずらす
+  const newTask = {
+    id, title: t, completed: false, task_order: 0,
+    spent_minutes: null, created_at: now, completed_at: null, updated_at: now, deleted: false,
+  };
+
+  const incomplete = tasks.filter(t => !t.completed).map(t => ({ ...t, task_order: t.task_order + 1 }));
+  const complete   = tasks.filter(t =>  t.completed);
+  tasks = [newTask, ...incomplete, ...complete];
+  render();
+
+  await window.taskAPI.addTask({ id, title: t, order: 0, created_at: now });
+
+  // order を全未完了で更新
+  const updOrder = tasks.filter(t => !t.completed).map((t, i) => ({ id: t.id, order: i }));
+  await window.taskAPI.updateOrder({ tasks: updOrder });
+}
+
+/* 時間入力を保存 */
+async function saveTimeInput(id, value) {
+  const mins = value === '' ? null : Math.max(0, parseInt(value, 10));
+  tasks = tasks.map(t => t.id === id ? { ...t, spent_minutes: mins } : t);
+  // フッター更新
+  renderFooter();
+  await window.taskAPI.updateSpentMinutes({ id, spent_minutes: mins });
+}
+
+/* チェックボックス操作 */
+async function handleCheck(task, itemEl) {
+  if (task.completed) {
+    await uncompleteTask(task.id);
+  } else {
+    // インライン入力欄の値を使って完了
+    const timeInput = itemEl.querySelector('.time-input');
+    const raw  = timeInput ? timeInput.value : '';
+    const mins = raw === '' ? null : Math.max(0, parseInt(raw, 10));
+    await completeTask(task.id, mins);
+  }
+}
+
+async function completeTask(id, spentMinutes) {
+  const now = nowISO();
+  tasks = tasks.map(t => t.id === id
+    ? { ...t, completed: true, completed_at: now, spent_minutes: spentMinutes }
+    : t
+  );
+  reorderAfterStatusChange();
+  render();
+  await window.taskAPI.completeTask({ id, spent_minutes: spentMinutes });
+}
+
+async function uncompleteTask(id) {
+  tasks = tasks.map(t => t.id === id
+    ? { ...t, completed: false, completed_at: null }
+    : t
+  );
+  reorderAfterStatusChange();
+  render();
+  await window.taskAPI.uncompleteTask({ id });
+}
+
+/* 完了/未完了変更後に配列を整理 */
+function reorderAfterStatusChange() {
+  const incomplete = tasks.filter(t => !t.completed);
+  const complete   = tasks.filter(t =>  t.completed);
+  tasks = [...incomplete, ...complete];
+}
+
+/* タスク削除 */
+function openDeleteModal(id) {
+  pendingDeleteId = id;
+  document.getElementById('modal-delete').classList.add('active');
+}
+function closeDeleteModal() {
+  document.getElementById('modal-delete').classList.remove('active');
+  pendingDeleteId = null;
+}
+async function deleteTask(id) {
+  tasks = tasks.filter(t => t.id !== id);
+  render();
+  await window.taskAPI.deleteTask({ id });
+}
+
+document.getElementById('btn-del-ok').addEventListener('click', async () => {
+  if (!pendingDeleteId) return;
+  const id = pendingDeleteId;
+  closeDeleteModal();
+  await deleteTask(id);
+});
+document.getElementById('btn-del-cancel').addEventListener('click', closeDeleteModal);
+document.getElementById('modal-delete').addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeDeleteModal();
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ドラッグ＆ドロップ（未完了タスクのみ）
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function onDragStart(e) {
+  dragSrcIdx = parseInt(e.currentTarget.dataset.idx);
+  e.currentTarget.classList.add('dragging');
+  e.dataTransfer.effectAllowed = 'move';
+  // 透明なゴースト（デフォルトの半透明プレビューを消す）
+  const ghost = document.createElement('div');
+  ghost.style.cssText = 'position:absolute;top:-9999px;opacity:0;';
+  document.body.appendChild(ghost);
+  e.dataTransfer.setDragImage(ghost, 0, 0);
+  setTimeout(() => ghost.remove(), 0);
+}
+
+function onDragOver(e) {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  clearDragOver();
+  const dropIdx = parseInt(e.currentTarget.dataset.idx);
+  if (dropIdx !== dragSrcIdx) {
+    // カーソル位置で上/下を判定
+    const rect = e.currentTarget.getBoundingClientRect();
+    const mid  = rect.top + rect.height / 2;
+    if (e.clientY < mid) {
+      e.currentTarget.classList.add('drag-over-top');
+    } else {
+      e.currentTarget.classList.add('drag-over-bottom');
+    }
+  }
+}
+
+function onDragLeave(e) { clearDragOver(); }
+
+function onDragEnd() {
+  clearDragOver();
+  document.querySelectorAll('.task-item').forEach(el => el.classList.remove('dragging'));
+  dragSrcIdx = null;
+}
+
+async function onDrop(e) {
+  e.preventDefault();
+  clearDragOver();
+
+  const dropIdx = parseInt(e.currentTarget.dataset.idx);
+  if (dragSrcIdx === null || dragSrcIdx === dropIdx) return;
+
+  // カーソル位置で挿入位置を決定
+  const rect  = e.currentTarget.getBoundingClientRect();
+  const after = e.clientY >= rect.top + rect.height / 2;
+
+  const incomplete = tasks.filter(t => !t.completed);
+  const complete   = tasks.filter(t =>  t.completed);
+
+  // srcを抜き取り
+  const [moved] = incomplete.splice(dragSrcIdx, 1);
+
+  // 挿入位置を調整
+  let insertAt = dropIdx;
+  if (dragSrcIdx < dropIdx) insertAt = dropIdx - 1;
+  if (after) insertAt += 1;
+  insertAt = Math.max(0, Math.min(insertAt, incomplete.length));
+
+  incomplete.splice(insertAt, 0, moved);
+
+  const reordered = incomplete.map((t, i) => ({ ...t, task_order: i }));
+  tasks = [...reordered, ...complete];
+  render();
+
+  await window.taskAPI.updateOrder({
+    tasks: reordered.map((t, i) => ({ id: t.id, order: i })),
+  });
+
+  dragSrcIdx = null;
+}
+
+function clearDragOver() {
+  document.querySelectorAll('.task-item').forEach(el => {
+    el.classList.remove('drag-over-top', 'drag-over-bottom');
+  });
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 入力欄 & ヘッダーボタン
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+const taskInput = document.getElementById('task-input');
+
+taskInput.addEventListener('keydown', async (e) => {
+  if (e.key === 'Enter') {
+    await addTask(taskInput.value);
+    taskInput.value = '';
+  }
+  if (e.key === 'Escape') {
+    taskInput.value = '';
+    taskInput.blur();
+  }
+});
+
+document.getElementById('btn-close').addEventListener('click', () =>
+  window.taskAPI.hideWindow()
+);
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// グローバルショートカットからのクイック追加
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+window.taskAPI.onQuickAdd((text) => {
+  taskInput.value = text;
+  taskInput.classList.remove('input-flash');
+  // リフローを起こしてアニメーションをリセット
+  void taskInput.offsetWidth;
+  taskInput.classList.add('input-flash');
+  taskInput.focus();
+  taskInput.select();
+  taskInput.addEventListener('animationend', () =>
+    taskInput.classList.remove('input-flash'), { once: true });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 初期ロード
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+(async () => {
+  const rows = await window.taskAPI.getTasks();
+  tasks = rows.map(r => ({
+    ...r,
+    completed: Boolean(r.completed),
+    deleted:   Boolean(r.deleted),
+  }));
+  render();
+  // ロード後にフォーカス
+  setTimeout(() => taskInput.focus(), 100);
+})();
+</script>
+</body>
+</html>

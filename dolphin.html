@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    width: 68px; height: 68px;
+    background: transparent;
+    overflow: hidden;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  #dolphin {
+    width: 64px; height: 64px;
+    border-radius: 50%;
+    background: linear-gradient(145deg, #8b82f8 0%, #6c63f0 50%, #5047cc 100%);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 34px;
+    cursor: grab;
+    box-shadow:
+      0 4px 16px rgba(108, 99, 240, 0.55),
+      0 1px 4px rgba(0,0,0,0.3);
+    transition: transform 0.12s ease, box-shadow 0.12s ease;
+    position: relative;
+    margin: 2px;
+    will-change: transform;
+  }
+
+  #dolphin:hover {
+    transform: scale(1.10);
+    box-shadow:
+      0 6px 24px rgba(108, 99, 240, 0.75),
+      0 2px 8px rgba(0,0,0,0.35);
+  }
+
+  #dolphin:active {
+    cursor: grabbing;
+    transform: scale(0.95);
+    box-shadow:
+      0 2px 8px rgba(108, 99, 240, 0.4),
+      0 1px 3px rgba(0,0,0,0.25);
+  }
+
+  /* ツールチップ */
+  #tooltip {
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(20, 20, 36, 0.92);
+    color: #e0e0f0;
+    font-size: 11px;
+    font-family: 'Segoe UI', 'Hiragino Sans', sans-serif;
+    white-space: nowrap;
+    padding: 4px 9px;
+    border-radius: 5px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.18s ease;
+    border: 1px solid rgba(108,99,240,0.35);
+  }
+
+  #dolphin:hover #tooltip {
+    opacity: 1;
+  }
+
+  /* バブルアニメーション（アイドル時） */
+  @keyframes float {
+    0%, 100% { transform: translateY(0px) scale(1); }
+    50%       { transform: translateY(-3px) scale(1.02); }
+  }
+
+  #dolphin.idle {
+    animation: float 3s ease-in-out infinite;
+  }
+</style>
+</head>
+<body>
+<div id="dolphin" class="idle">
+  🐬
+  <div id="tooltip">クリックでタスクを開く</div>
+</div>
+
+<script>
+  const el = document.getElementById('dolphin');
+
+  let isDragging = false;
+  let startMouseX = 0, startMouseY = 0;
+  let startWinX = 0, startWinY = 0;
+  let hasMoved = false;
+  const DRAG_THRESHOLD = 5;
+
+  el.addEventListener('mousedown', async (e) => {
+    if (e.button !== 0) return;
+    // e.preventDefault() を除去 → macOS でのクリック検出を安定化
+
+    // ドラッグ開始時にアニメーション停止
+    el.classList.remove('idle');
+
+    const pos = await window.dolphinAPI.getPosition();
+    startMouseX = e.screenX;
+    startMouseY = e.screenY;
+    startWinX   = pos[0];
+    startWinY   = pos[1];
+    hasMoved    = false;
+    isDragging  = true;
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup',   onMouseUp);
+  });
+
+  function onMouseMove(e) {
+    if (!isDragging) return;
+    const dx = e.screenX - startMouseX;
+    const dy = e.screenY - startMouseY;
+
+    if (Math.abs(dx) > DRAG_THRESHOLD || Math.abs(dy) > DRAG_THRESHOLD) {
+      hasMoved = true;
+    }
+
+    if (hasMoved) {
+      window.dolphinAPI.setPosition(startWinX + dx, startWinY + dy);
+    }
+  }
+
+  function onMouseUp() {
+    document.removeEventListener('mousemove', onMouseMove);
+    document.removeEventListener('mouseup',   onMouseUp);
+
+    if (!hasMoved) {
+      // クリック → タスクウィンドウをトグル
+      window.dolphinAPI.toggle();
+    }
+
+    isDragging = false;
+
+    // アニメーション再開（少し遅延）
+    setTimeout(() => el.classList.add('idle'), 300);
+  }
+
+  // 右クリック → コンテキストメニュー
+  el.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    window.dolphinAPI.contextMenu();
+  });
+</script>
+</body>
+</html>
