@@ -63,7 +63,7 @@ html, body {
   color: var(--text);
 }
 
-#btn-close {
+#btn-close, #btn-history {
   -webkit-app-region: no-drag;
   background: none; border: none; cursor: pointer;
   color: var(--text-dim); font-size: 15px;
@@ -73,6 +73,8 @@ html, body {
   transition: background 0.15s, color 0.15s;
 }
 #btn-close:hover { background: var(--danger); color: #fff; }
+#btn-history:hover { background: var(--surface2); color: var(--accent); }
+#btn-history.active { color: var(--accent); background: var(--accent-glow); }
 
 /* ─── ショートカットヒント ───────────────────── */
 #shortcut-hint {
@@ -255,6 +257,103 @@ html, body {
 }
 .empty-state span { display: block; font-size: 24px; margin-bottom: 6px; }
 
+/* ─── 履歴ビュー ─────────────────────────────── */
+#history-area {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0 8px;
+}
+#history-area::-webkit-scrollbar { width: 4px; }
+#history-area::-webkit-scrollbar-track { background: transparent; }
+#history-area::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+/* 棒グラフ */
+.chart-wrap {
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.chart-head {
+  display: flex; justify-content: space-between; align-items: baseline;
+  margin-bottom: 10px;
+}
+.chart-head .ttl { font-size: 12px; font-weight: 700; color: var(--text); }
+.chart-head .sub { font-size: 11px; color: var(--text-dim); }
+
+/* トグルボタン群 */
+.toggle-row {
+  display: flex; gap: 4px; margin-bottom: 10px;
+}
+.toggle-row.metric { margin-bottom: 8px; }
+.toggle-btn {
+  -webkit-app-region: no-drag;
+  flex: 1;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-size: 11px; font-weight: 600;
+  padding: 4px 0; cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.toggle-btn:hover { color: var(--text); }
+.toggle-btn.active {
+  background: var(--accent); border-color: var(--accent); color: #fff;
+}
+.chart-bars {
+  display: flex; align-items: flex-end; justify-content: space-between;
+  gap: 6px; height: 84px;
+}
+.bar-col {
+  flex: 1;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  height: 100%;
+}
+.bar-count {
+  font-size: 10px; color: var(--text-dim); height: 12px; line-height: 12px;
+}
+.bar-track {
+  flex: 1; width: 100%;
+  display: flex; align-items: flex-end; justify-content: center;
+}
+.bar-fill {
+  width: 60%; max-width: 18px; min-height: 2px;
+  background: var(--surface2);
+  border-radius: 3px 3px 0 0;
+  transition: height 0.3s ease;
+}
+.bar-col.has-value .bar-fill { background: var(--accent); }
+.bar-col.is-today .bar-fill {
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent-glow);
+}
+.bar-col.is-today .bar-label { color: var(--accent); font-weight: 700; }
+.bar-label { font-size: 10px; color: var(--text-dim); }
+
+/* 日付グループ見出し */
+.date-group {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px 5px;
+  font-size: 11px; font-weight: 700; color: var(--text-dim);
+}
+.date-group .meta { font-weight: 400; }
+
+/* 履歴アイテム（読み取り専用） */
+.hist-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 14px 5px 16px;
+  min-height: 30px;
+}
+.hist-item .h-title {
+  flex: 1; font-size: 13px; color: var(--done-text);
+  word-break: break-all; line-height: 1.4;
+  -webkit-user-select: text; user-select: text;
+}
+.hist-item .h-time {
+  font-size: 11px; color: var(--text-dim);
+  background: var(--surface2);
+  padding: 2px 7px; border-radius: 10px; white-space: nowrap;
+}
+
 /* ─── フッター ───────────────────────────────── */
 #footer {
   padding: 7px 14px;
@@ -322,7 +421,8 @@ html, body {
   <!-- ヘッダー -->
   <div id="header">
     <span class="icon">🐬</span>
-    <span class="title">今日のタスク</span>
+    <span class="title" id="header-title">今日のタスク</span>
+    <button id="btn-history" title="履歴を表示">🕑</button>
     <button id="btn-close" title="閉じる（常駐継続）">✕</button>
   </div>
 
@@ -343,6 +443,28 @@ html, body {
     <div id="list-incomplete"></div>
     <div id="divider-done" class="divider" style="display:none">完了済み</div>
     <div id="list-complete"></div>
+  </div>
+
+  <!-- 履歴ビュー -->
+  <div id="history-area" style="display:none">
+    <div class="chart-wrap">
+      <div class="chart-head">
+        <span class="ttl" id="chart-title">直近7日の完了</span>
+        <span class="sub" id="chart-sub"></span>
+      </div>
+      <div class="toggle-row metric" id="metric-toggle">
+        <button class="toggle-btn active" data-metric="count">件数</button>
+        <button class="toggle-btn" data-metric="time">作業時間</button>
+      </div>
+      <div class="toggle-row period" id="period-toggle">
+        <button class="toggle-btn active" data-period="7">7日</button>
+        <button class="toggle-btn" data-period="14">14日</button>
+        <button class="toggle-btn" data-period="30">1ヶ月</button>
+        <button class="toggle-btn" data-period="90">3ヶ月</button>
+      </div>
+      <div class="chart-bars" id="chart-bars"></div>
+    </div>
+    <div id="history-list"></div>
   </div>
 
   <!-- フッター -->
@@ -370,6 +492,9 @@ html, body {
 let tasks          = [];
 let pendingDeleteId = null;
 let dragSrcIdx     = null;  // ドラッグ元インデックス（未完了リスト内）
+let currentView    = 'tasks';  // 'tasks' | 'history'
+let chartMetric    = 'count';   // 'count' | 'time'
+let chartPeriod    = 7;         // 7 | 14 | 30 | 90 (日)
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ユーティリティ
@@ -399,6 +524,25 @@ function escHtml(str) {
   return str
     .replace(/&/g, '&amp;').replace(/</g, '&lt;')
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+/* ローカル日付キー（YYYY-MM-DD） */
+function dateKey(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/* 日付の見出しラベル（今日 / 昨日 / M月D日(曜)） */
+const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
+function dateLabel(d) {
+  const today = new Date();
+  const key   = dateKey(d);
+  if (key === dateKey(today)) return '今日';
+  const yest = new Date(today); yest.setDate(today.getDate() - 1);
+  if (key === dateKey(yest)) return '昨日';
+  return `${d.getMonth() + 1}月${d.getDate()}日(${WEEKDAYS[d.getDay()]})`;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -727,6 +871,187 @@ window.taskAPI.onQuickAdd((text) => {
   taskInput.select();
   taskInput.addEventListener('animationend', () =>
     taskInput.classList.remove('input-flash'), { once: true });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 履歴ビュー
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function switchView(view) {
+  currentView = view;
+  const isHist = view === 'history';
+  document.getElementById('input-area').style.display    = isHist ? 'none' : '';
+  document.getElementById('shortcut-hint').style.display = isHist ? 'none' : '';
+  document.getElementById('list-area').style.display     = isHist ? 'none' : '';
+  document.getElementById('history-area').style.display  = isHist ? 'block' : 'none';
+  document.getElementById('header-title').textContent    = isHist ? '完了の履歴' : '今日のタスク';
+  document.getElementById('btn-history').classList.toggle('active', isHist);
+  document.getElementById('btn-history').title = isHist ? 'タスクに戻る' : '履歴を表示';
+  if (isHist) renderHistory();
+}
+
+const PERIOD_LABEL = { 7: '7日', 14: '14日', 30: '1ヶ月', 90: '3ヶ月' };
+
+function renderHistory() {
+  // 選択期間内に完了したタスクだけを対象にする
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() - (chartPeriod - 1));
+  const done = tasks.filter(t =>
+    t.completed && t.completed_at && new Date(t.completed_at) >= start
+  );
+
+  document.getElementById('chart-title').textContent =
+    `直近${PERIOD_LABEL[chartPeriod]}の完了`;
+
+  renderChart(done);
+  renderHistoryList(done);
+}
+
+/* 指標値（件数 or 作業時間[分]）を集計 */
+function metricValue(items) {
+  if (chartMetric === 'time') {
+    return items
+      .filter(t => t.spent_minutes != null)
+      .reduce((s, t) => s + parseInt(t.spent_minutes, 10), 0);
+  }
+  return items.length;
+}
+
+/* 棒グラフ（期間に応じて日次/週次バケット） */
+function renderChart(done) {
+  const bars = document.getElementById('chart-bars');
+  bars.innerHTML = '';
+
+  const today  = new Date(); today.setHours(0, 0, 0, 0);
+  const weekly = chartPeriod === 90;   // 3ヶ月は週ごと集計
+  const buckets = [];
+
+  if (weekly) {
+    // 直近13週（今週を含む）。各週は月曜始まり。
+    const monday = new Date(today);
+    const dow = (monday.getDay() + 6) % 7;     // 月=0
+    monday.setDate(monday.getDate() - dow);
+    for (let i = 12; i >= 0; i--) {
+      const start = new Date(monday); start.setDate(monday.getDate() - i * 7);
+      const end   = new Date(start);  end.setDate(start.getDate() + 7);
+      const items = done.filter(t => {
+        const c = new Date(t.completed_at);
+        return c >= start && c < end;
+      });
+      buckets.push({ items, label: `${start.getMonth() + 1}/${start.getDate()}`,
+                     isToday: today >= start && today < end });
+    }
+  } else {
+    // 日次
+    for (let i = chartPeriod - 1; i >= 0; i--) {
+      const d = new Date(today); d.setDate(today.getDate() - i);
+      const key = dateKey(d);
+      const items = done.filter(t => dateKey(new Date(t.completed_at)) === key);
+      const label = chartPeriod <= 7 ? WEEKDAYS[d.getDay()] : String(d.getDate());
+      buckets.push({ items, label, isToday: key === dateKey(today) });
+    }
+  }
+
+  const vals   = buckets.map(b => metricValue(b.items));
+  const maxVal = Math.max(1, ...vals);
+  const total  = vals.reduce((s, v) => s + v, 0);
+  const unit   = chartMetric === 'time' ? '分' : '件';
+
+  document.getElementById('chart-sub').textContent =
+    chartMetric === 'time' ? `計 ${formatMinutes(total) || '0分'}` : `計 ${total} 件`;
+
+  // バーが多いときはラベルを間引く
+  const n = buckets.length;
+  const labelEvery = n <= 14 ? 1 : (n <= 30 ? 5 : 1);
+  const showCount  = n <= 14;   // バー上の数値は本数が少ないときだけ
+
+  buckets.forEach((b, i) => {
+    const v   = vals[i];
+    const pct = Math.round((v / maxVal) * 100);
+    const showLabel = (n - 1 - i) % labelEvery === 0 || i === n - 1;
+
+    const col = document.createElement('div');
+    col.className = 'bar-col' + (v > 0 ? ' has-value' : '') + (b.isToday ? ' is-today' : '');
+    col.innerHTML = `
+      <span class="bar-count">${showCount && v > 0 ? v : ''}</span>
+      <div class="bar-track">
+        <div class="bar-fill" style="height:${v > 0 ? Math.max(pct, 3) : 0}%"></div>
+      </div>
+      <span class="bar-label">${showLabel ? b.label : ''}</span>
+    `;
+    bars.appendChild(col);
+  });
+}
+
+/* 日付グループ別の完了一覧（選択期間内） */
+function renderHistoryList(done) {
+  const container = document.getElementById('history-list');
+  container.innerHTML = '';
+
+  if (done.length === 0) {
+    container.innerHTML =
+      '<div class="empty-state"><span>📋</span>この期間に完了したタスクはありません</div>';
+    return;
+  }
+
+  const sorted = [...done].sort(
+    (a, b) => new Date(b.completed_at) - new Date(a.completed_at)
+  );
+
+  const groups = {};
+  sorted.forEach(t => {
+    const key = dateKey(new Date(t.completed_at));
+    (groups[key] = groups[key] || []).push(t);
+  });
+
+  Object.keys(groups).forEach(key => {
+    const items = groups[key];
+    const d     = new Date(items[0].completed_at);
+    const totalMin = items
+      .filter(t => t.spent_minutes != null)
+      .reduce((s, t) => s + parseInt(t.spent_minutes, 10), 0);
+
+    const head = document.createElement('div');
+    head.className = 'date-group';
+    const minLabel = totalMin > 0 ? ' / ' + formatMinutes(totalMin) : '';
+    head.innerHTML =
+      `<span>${dateLabel(d)}</span>` +
+      `<span class="meta">${items.length}件${minLabel}</span>`;
+    container.appendChild(head);
+
+    items.forEach(t => {
+      const row = document.createElement('div');
+      row.className = 'hist-item';
+      row.innerHTML =
+        `<span class="h-title">${escHtml(t.title)}</span>` +
+        `<span class="h-time">${formatMinutes(t.spent_minutes) || '–'}</span>`;
+      container.appendChild(row);
+    });
+  });
+}
+
+document.getElementById('btn-history').addEventListener('click', () => {
+  switchView(currentView === 'history' ? 'tasks' : 'history');
+});
+
+/* 指標トグル */
+document.getElementById('metric-toggle').addEventListener('click', (e) => {
+  const btn = e.target.closest('.toggle-btn');
+  if (!btn) return;
+  chartMetric = btn.dataset.metric;
+  document.querySelectorAll('#metric-toggle .toggle-btn')
+    .forEach(b => b.classList.toggle('active', b === btn));
+  renderHistory();
+});
+
+/* 期間トグル */
+document.getElementById('period-toggle').addEventListener('click', (e) => {
+  const btn = e.target.closest('.toggle-btn');
+  if (!btn) return;
+  chartPeriod = parseInt(btn.dataset.period, 10);
+  document.querySelectorAll('#period-toggle .toggle-btn')
+    .forEach(b => b.classList.toggle('active', b === btn));
+  renderHistory();
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
