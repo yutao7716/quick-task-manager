@@ -3,7 +3,7 @@
 const {
   app, BrowserWindow, Tray, Menu,
   ipcMain, nativeImage, screen,
-  globalShortcut, clipboard,
+  globalShortcut, clipboard, dialog,
 } = require('electron');
 const path = require('path');
 const fs   = require('fs');
@@ -16,21 +16,49 @@ let dbFilePath = null;
 
 function initDatabase() {
   dbFilePath = path.join(app.getPath('userData'), 'tasks.json');
-  try {
-    if (fs.existsSync(dbFilePath)) {
-      const raw = fs.readFileSync(dbFilePath, 'utf8');
-      tasksCache = JSON.parse(raw);
+  const backupPath = dbFilePath + '.bak';
+
+  // 本体 → バックアップの順に読み込みを試みる（破損時フォールバック）
+  for (const p of [dbFilePath, backupPath]) {
+    try {
+      if (fs.existsSync(p)) {
+        const raw = fs.readFileSync(p, 'utf8');
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          tasksCache = parsed;
+          if (p === backupPath) {
+            console.warn('本体が読めなかったためバックアップから復元しました');
+          }
+          return;
+        }
+      }
+    } catch (e) {
+      console.error(`タスクデータ読み込みエラー (${path.basename(p)}):`, e);
     }
-  } catch (e) {
-    console.error('タスクデータ読み込みエラー:', e);
-    tasksCache = [];
   }
+  tasksCache = [];
 }
 
 function saveDb() {
   if (!dbFilePath) return;
+  const tmpPath    = dbFilePath + '.tmp';
+  const backupPath = dbFilePath + '.bak';
   try {
-    fs.writeFileSync(dbFilePath, JSON.stringify(tasksCache, null, 2), 'utf8');
+    const data = JSON.stringify(tasksCache, null, 2);
+    // 1) 一時ファイルに書いて flush
+    const fd = fs.openSync(tmpPath, 'w');
+    try {
+      fs.writeFileSync(fd, data, 'utf8');
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+    // 2) 既存の本体をバックアップへ退避
+    if (fs.existsSync(dbFilePath)) {
+      fs.copyFileSync(dbFilePath, backupPath);
+    }
+    // 3) 一時ファイルをアトミックに本体へ差し替え
+    fs.renameSync(tmpPath, dbFilePath);
   } catch (e) {
     console.error('タスクデータ保存エラー:', e);
   }
@@ -170,6 +198,9 @@ function createTray() {
     { label: 'タスクを開く',          click: () => showMainWindowNearDolphin() },
     { label: '🐬 イルカを右下に戻す', click: () => { resetDolphinPosition(); dolphinWindow?.show(); } },
     { type: 'separator' },
+    { label: 'タスクをエクスポート…', click: () => exportFromMenu() },
+    { label: 'タスクをインポート…',   click: () => importFromMenu() },
+    { type: 'separator' },
     { label: '終了',                   click: () => app.quit() },
   ]);
 
@@ -270,6 +301,125 @@ ipcMain.handle('db:updateOrder', (_, { tasks }) => {
     }
   }
   saveDb();
+});
+
+// ──────────────────────────────────────────────
+// IPC — エクスポート / インポート
+// ──────────────────────────────────────────────
+
+/** 1件のタスクを正規化（インポート時の防御） */
+function normalizeTask(t) {
+  if (!t || typeof t !== 'object') return null;
+  if (typeof t.id !== 'string' || typeof t.title !== 'string') return null;
+  let spent = t.spent_minutes;
+  if (spent != null) {
+    spent = parseInt(spent, 10);
+    if (isNaN(spent)) spent = null;
+    else spent = Math.min(Math.max(spent, 0), 9999);
+  }
+  return {
+    id: t.id,
+    title: String(t.title).slice(0, 500),
+    completed: Boolean(t.completed),
+    task_order: Number.isFinite(t.task_order) ? t.task_order : 0,
+    spent_minutes: spent ?? null,
+    created_at: t.created_at || new Date().toISOString(),
+    completed_at: t.completed_at || null,
+    updated_at: t.updated_at || new Date().toISOString(),
+    deleted: Boolean(t.deleted),
+  };
+}
+
+/** エクスポート本体（ダイアログ→書き出し） */
+async function doExport() {
+  const d = new Date();
+  const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+    title: 'タスクをエクスポート',
+    defaultPath: `tasks-backup-${stamp}.json`,
+    filters: [{ name: 'JSON', extensions: ['json'] }],
+  });
+  if (canceled || !filePath) return { ok: false, canceled: true };
+  fs.writeFileSync(filePath, JSON.stringify(tasksCache, null, 2), 'utf8');
+  return { ok: true, count: tasksCache.filter(t => !t.deleted).length };
+}
+
+/** エクスポート: 保存ダイアログでJSONを書き出す */
+ipcMain.handle('data:export', async () => {
+  try {
+    return await doExport();
+  } catch (e) {
+    console.error('エクスポートエラー:', e);
+    return { ok: false, error: e.message };
+  }
+});
+
+/** トレイメニュー用ラッパー */
+async function exportFromMenu() {
+  try { await doExport(); }
+  catch (e) { console.error('エクスポートエラー:', e); }
+}
+
+async function importFromMenu() {
+  try {
+    const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+      title: 'タスクをインポート',
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+      properties: ['openFile'],
+    });
+    if (canceled || !filePaths || !filePaths[0]) return;
+    const parsed = JSON.parse(fs.readFileSync(filePaths[0], 'utf8'));
+    if (!Array.isArray(parsed)) {
+      dialog.showMessageBox(mainWindow, { type: 'error', message: 'ファイル形式が正しくありません。' });
+      return;
+    }
+    const tasks = parsed.map(normalizeTask).filter(Boolean);
+    const { response } = await dialog.showMessageBox(mainWindow, {
+      type: 'warning',
+      buttons: ['キャンセル', 'インポート'],
+      defaultId: 1,
+      cancelId: 0,
+      message: '現在のタスクを置き換えますか？',
+      detail: `読み込むタスク: ${tasks.filter(t => !t.deleted).length}件\n先に現在のデータをエクスポートしておくことを推奨します。`,
+    });
+    if (response !== 1) return;
+    tasksCache = tasks;
+    saveDb();
+    mainWindow?.webContents.send('data:reloaded');
+  } catch (e) {
+    console.error('インポートエラー:', e);
+    dialog.showMessageBox(mainWindow, { type: 'error', message: 'インポートに失敗しました。' });
+  }
+}
+
+/** インポート(読込のみ): ファイルを選んで検証し、内容を返す（まだ適用しない） */
+ipcMain.handle('data:importRead', async () => {
+  try {
+    const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+      title: 'タスクをインポート',
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+      properties: ['openFile'],
+    });
+    if (canceled || !filePaths || !filePaths[0]) return { ok: false, canceled: true };
+    const raw = fs.readFileSync(filePaths[0], 'utf8');
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return { ok: false, error: 'ファイル形式が正しくありません（配列ではありません）' };
+    }
+    const tasks = parsed.map(normalizeTask).filter(Boolean);
+    return { ok: true, tasks, count: tasks.filter(t => !t.deleted).length };
+  } catch (e) {
+    console.error('インポート読込エラー:', e);
+    return { ok: false, error: 'ファイルを読み込めませんでした（JSONが壊れている可能性があります）' };
+  }
+});
+
+/** インポート(適用): 検証済みデータで全置き換え */
+ipcMain.handle('data:importApply', (_, { tasks }) => {
+  if (!Array.isArray(tasks)) return { ok: false, error: '不正なデータ' };
+  tasksCache = tasks.map(normalizeTask).filter(Boolean);
+  saveDb();
+  return { ok: true, count: tasksCache.filter(t => !t.deleted).length };
 });
 
 // ──────────────────────────────────────────────

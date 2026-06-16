@@ -12,10 +12,19 @@ contextBridge.exposeInMainWorld('taskAPI', {
   deleteTask:         (data) => ipcRenderer.invoke('db:deleteTask', data),
   updateOrder:        (data) => ipcRenderer.invoke('db:updateOrder', data),
 
+  // エクスポート / インポート
+  exportData:  ()      => ipcRenderer.invoke('data:export'),
+  importRead:  ()      => ipcRenderer.invoke('data:importRead'),
+  importApply: (data)  => ipcRenderer.invoke('data:importApply', data),
+
   // ウィンドウ
   hideWindow: () => ipcRenderer.send('window:hide'),
 
   // グローバルショートカット経由のクイック追加
   onQuickAdd: (callback) =>
     ipcRenderer.on('quick-add', (_event, text) => callback(text)),
+
+  // メニューからのインポート後の再読込通知
+  onDataReloaded: (callback) =>
+    ipcRenderer.on('data:reloaded', () => callback()),
 });

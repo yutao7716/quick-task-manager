@@ -63,7 +63,7 @@ html, body {
   color: var(--text);
 }
 
-#btn-close, #btn-history {
+#btn-close, #btn-history, #btn-backup {
   -webkit-app-region: no-drag;
   background: none; border: none; cursor: pointer;
   color: var(--text-dim); font-size: 15px;
@@ -75,6 +75,30 @@ html, body {
 #btn-close:hover { background: var(--danger); color: #fff; }
 #btn-history:hover { background: var(--surface2); color: var(--accent); }
 #btn-history.active { color: var(--accent); background: var(--accent-glow); }
+#btn-backup:hover { background: var(--surface2); color: var(--accent); }
+
+/* バックアップメニュー */
+#backup-menu {
+  display: none;
+  position: absolute;
+  top: 42px; right: 40px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  padding: 4px;
+  z-index: 250;
+  min-width: 190px;
+}
+#backup-menu.active { display: block; }
+.bm-item {
+  display: block; width: 100%;
+  background: none; border: none; cursor: pointer;
+  color: var(--text); font-size: 12px; text-align: left;
+  padding: 8px 10px; border-radius: 6px;
+  transition: background 0.12s;
+}
+.bm-item:hover { background: var(--surface2); }
 
 /* ─── ショートカットヒント ───────────────────── */
 #shortcut-hint {
@@ -404,6 +428,27 @@ html, body {
 .btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
 .btn-danger    { background: var(--danger);  color: #fff; }
 
+/* ─── トースト通知 ───────────────────────────── */
+#toast {
+  position: fixed;
+  left: 50%;
+  bottom: 44px;
+  transform: translateX(-50%) translateY(8px);
+  background: var(--danger);
+  color: #fff;
+  font-size: 12px; font-weight: 600;
+  padding: 8px 14px;
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s, transform 0.2s;
+  z-index: 300;
+  max-width: 80%;
+  text-align: center;
+}
+#toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
 /* クイック追加ハイライト */
 @keyframes flash-input {
   0%, 100% { box-shadow: 0 0 0 3px var(--accent-glow); }
@@ -422,8 +467,15 @@ html, body {
   <div id="header">
     <span class="icon">🐬</span>
     <span class="title" id="header-title">今日のタスク</span>
+    <button id="btn-backup" title="バックアップ">💾</button>
     <button id="btn-history" title="履歴を表示">🕑</button>
     <button id="btn-close" title="閉じる（常駐継続）">✕</button>
+  </div>
+
+  <!-- バックアップメニュー -->
+  <div id="backup-menu">
+    <button class="bm-item" id="bm-export">⬆️ エクスポート（書き出し）</button>
+    <button class="bm-item" id="bm-import">⬇️ インポート（読み込み）</button>
   </div>
 
   <!-- ショートカットヒント -->
@@ -441,7 +493,7 @@ html, body {
   <!-- タスクリスト -->
   <div id="list-area">
     <div id="list-incomplete"></div>
-    <div id="divider-done" class="divider" style="display:none">完了済み</div>
+    <div id="divider-done" class="divider" style="display:none">本日の完了</div>
     <div id="list-complete"></div>
   </div>
 
@@ -474,6 +526,9 @@ html, body {
   </div>
 </div>
 
+<!-- トースト通知 -->
+<div id="toast"></div>
+
 <!-- 削除確認モーダル -->
 <div class="modal-overlay" id="modal-delete">
   <div class="modal">
@@ -501,6 +556,16 @@ let chartPeriod    = 7;         // 7 | 14 | 30 | 90 (日)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 const genId  = () => 'task_' + Date.now() + '_' + Math.random().toString(36).slice(2,8);
 const nowISO = () => new Date().toISOString();
+
+/* トースト通知（主にエラー用） */
+let toastTimer = null;
+function showToast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2600);
+}
 
 function formatMinutes(mins) {
   if (mins === null || mins === undefined || mins === '') return '';
@@ -550,7 +615,9 @@ function dateLabel(d) {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function render() {
   const incomplete = tasks.filter(t => !t.completed);
-  const complete   = tasks.filter(t =>  t.completed);
+  // メインリストには「当日に完了したもの」だけを表示し、肥大化を防ぐ。
+  // 過去の完了タスクは履歴ビュー（🕑）で参照できる。
+  const complete   = tasks.filter(t => t.completed && isToday(t.completed_at));
 
   renderIncomplete(incomplete);
   renderComplete(complete);
@@ -668,25 +735,42 @@ async function addTask(title) {
     spent_minutes: null, created_at: now, completed_at: null, updated_at: now, deleted: false,
   };
 
+  const snapshot   = tasks;
   const incomplete = tasks.filter(t => !t.completed).map(t => ({ ...t, task_order: t.task_order + 1 }));
   const complete   = tasks.filter(t =>  t.completed);
   tasks = [newTask, ...incomplete, ...complete];
   render();
 
-  await window.taskAPI.addTask({ id, title: t, order: 0, created_at: now });
-
-  // order を全未完了で更新
-  const updOrder = tasks.filter(t => !t.completed).map((t, i) => ({ id: t.id, order: i }));
-  await window.taskAPI.updateOrder({ tasks: updOrder });
+  try {
+    await window.taskAPI.addTask({ id, title: t, order: 0, created_at: now });
+    // order を全未完了で更新
+    const updOrder = tasks.filter(t => !t.completed).map((t, i) => ({ id: t.id, order: i }));
+    await window.taskAPI.updateOrder({ tasks: updOrder });
+  } catch (e) {
+    tasks = snapshot;
+    render();
+    showToast('タスクの追加に失敗しました');
+  }
 }
 
 /* 時間入力を保存 */
 async function saveTimeInput(id, value) {
-  const mins = value === '' ? null : Math.max(0, parseInt(value, 10));
+  let mins = value === '' ? null : Math.max(0, parseInt(value, 10));
+  if (mins != null) {
+    if (isNaN(mins)) mins = null;
+    else mins = Math.min(mins, 9999);   // 上限を強制
+  }
+  const snapshot = tasks;
   tasks = tasks.map(t => t.id === id ? { ...t, spent_minutes: mins } : t);
   // フッター更新
   renderFooter();
-  await window.taskAPI.updateSpentMinutes({ id, spent_minutes: mins });
+  try {
+    await window.taskAPI.updateSpentMinutes({ id, spent_minutes: mins });
+  } catch (e) {
+    tasks = snapshot;
+    render();
+    showToast('作業時間の保存に失敗しました');
+  }
 }
 
 /* チェックボックス操作 */
@@ -704,23 +788,37 @@ async function handleCheck(task, itemEl) {
 
 async function completeTask(id, spentMinutes) {
   const now = nowISO();
+  const snapshot = tasks;
   tasks = tasks.map(t => t.id === id
     ? { ...t, completed: true, completed_at: now, spent_minutes: spentMinutes }
     : t
   );
   reorderAfterStatusChange();
   render();
-  await window.taskAPI.completeTask({ id, spent_minutes: spentMinutes });
+  try {
+    await window.taskAPI.completeTask({ id, spent_minutes: spentMinutes });
+  } catch (e) {
+    tasks = snapshot;
+    render();
+    showToast('完了の保存に失敗しました');
+  }
 }
 
 async function uncompleteTask(id) {
+  const snapshot = tasks;
   tasks = tasks.map(t => t.id === id
     ? { ...t, completed: false, completed_at: null }
     : t
   );
   reorderAfterStatusChange();
   render();
-  await window.taskAPI.uncompleteTask({ id });
+  try {
+    await window.taskAPI.uncompleteTask({ id });
+  } catch (e) {
+    tasks = snapshot;
+    render();
+    showToast('完了取り消しの保存に失敗しました');
+  }
 }
 
 /* 完了/未完了変更後に配列を整理 */
@@ -740,9 +838,16 @@ function closeDeleteModal() {
   pendingDeleteId = null;
 }
 async function deleteTask(id) {
+  const snapshot = tasks;
   tasks = tasks.filter(t => t.id !== id);
   render();
-  await window.taskAPI.deleteTask({ id });
+  try {
+    await window.taskAPI.deleteTask({ id });
+  } catch (e) {
+    tasks = snapshot;
+    render();
+    showToast('削除の保存に失敗しました');
+  }
 }
 
 document.getElementById('btn-del-ok').addEventListener('click', async () => {
@@ -807,6 +912,7 @@ async function onDrop(e) {
   const rect  = e.currentTarget.getBoundingClientRect();
   const after = e.clientY >= rect.top + rect.height / 2;
 
+  const snapshot   = tasks;
   const incomplete = tasks.filter(t => !t.completed);
   const complete   = tasks.filter(t =>  t.completed);
 
@@ -825,9 +931,15 @@ async function onDrop(e) {
   tasks = [...reordered, ...complete];
   render();
 
-  await window.taskAPI.updateOrder({
-    tasks: reordered.map((t, i) => ({ id: t.id, order: i })),
-  });
+  try {
+    await window.taskAPI.updateOrder({
+      tasks: reordered.map((t, i) => ({ id: t.id, order: i })),
+    });
+  } catch (e) {
+    tasks = snapshot;
+    render();
+    showToast('並び替えの保存に失敗しました');
+  }
 
   dragSrcIdx = null;
 }
@@ -857,6 +969,58 @@ taskInput.addEventListener('keydown', async (e) => {
 document.getElementById('btn-close').addEventListener('click', () =>
   window.taskAPI.hideWindow()
 );
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// バックアップ（エクスポート / インポート）
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+const backupMenu = document.getElementById('backup-menu');
+
+document.getElementById('btn-backup').addEventListener('click', (e) => {
+  e.stopPropagation();
+  backupMenu.classList.toggle('active');
+});
+document.addEventListener('click', (e) => {
+  if (!backupMenu.contains(e.target) && e.target.id !== 'btn-backup') {
+    backupMenu.classList.remove('active');
+  }
+});
+
+document.getElementById('bm-export').addEventListener('click', async () => {
+  backupMenu.classList.remove('active');
+  try {
+    const res = await window.taskAPI.exportData();
+    if (res.ok) showToast(`${res.count}件をエクスポートしました`);
+    else if (res.error) showToast('エクスポートに失敗しました');
+  } catch (e) {
+    showToast('エクスポートに失敗しました');
+  }
+});
+
+document.getElementById('bm-import').addEventListener('click', async () => {
+  backupMenu.classList.remove('active');
+  try {
+    const res = await window.taskAPI.importRead();
+    if (!res.ok) {
+      if (res.error) showToast(res.error);
+      return;
+    }
+    const ok = confirm(
+      `インポートすると現在のタスクは置き換えられます。\n` +
+      `読み込むタスク: ${res.count}件\n\n` +
+      `先に現在のデータをエクスポートしておくことを推奨します。続行しますか？`
+    );
+    if (!ok) return;
+    const applied = await window.taskAPI.importApply({ tasks: res.tasks });
+    if (applied.ok) {
+      await reloadTasks();
+      showToast(`${applied.count}件をインポートしました`);
+    } else {
+      showToast('インポートの適用に失敗しました');
+    }
+  } catch (e) {
+    showToast('インポートに失敗しました');
+  }
+});
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // グローバルショートカットからのクイック追加
@@ -1057,14 +1221,25 @@ document.getElementById('period-toggle').addEventListener('click', (e) => {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // 初期ロード
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-(async () => {
+async function reloadTasks() {
   const rows = await window.taskAPI.getTasks();
   tasks = rows.map(r => ({
     ...r,
     completed: Boolean(r.completed),
     deleted:   Boolean(r.deleted),
   }));
-  render();
+  if (currentView === 'history') renderHistory();
+  else render();
+}
+
+// メニュー（トレイ）からインポートされたら再読込
+window.taskAPI.onDataReloaded(async () => {
+  await reloadTasks();
+  showToast('インポートしました');
+});
+
+(async () => {
+  await reloadTasks();
   // ロード後にフォーカス
   setTimeout(() => taskInput.focus(), 100);
 })();
